@@ -25,5 +25,14 @@ namespace AppointmentScheduler.Models
         [JsonPropertyName("requestId")]
         public int RequestId { get; set; }
 
+        public AppointmentInfoRequest(int doctorId, int personId, DateTime appointmentTime, 
+            bool isNewPatientAppointment, int requestId)
+        {
+            DoctorId = doctorId;
+            PersonId = personId;
+            AppointmentTime = appointmentTime;
+            IsNewPatientAppointment = isNewPatientAppointment;
+            RequestId = requestId;
+        }
     }
 }
