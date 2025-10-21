@@ -13,8 +13,15 @@ public class Program
         BaseAddress = new Uri("https://scheduling.interviews.brevium.com/api/")
     };
     private static string token = "";
+
+    // Dictionary has a key of Doctor, Appointment Time, and value of AppointmentInfo
+    // O(1) lookup
+    private static Dictionary<(int, DateTime), AppointmentInfo> scheduleDictionary = 
+        new Dictionary<(int, DateTime), AppointmentInfo>();
+
     public async static Task Main(string[] args)
     {
+        // Get api token from secrets
         var config = new ConfigurationBuilder()
             .AddUserSecrets<Program>()
             .Build();
@@ -22,56 +29,88 @@ public class Program
         token = config["Api:Token"] ?? throw new Exception("Missing Api Token");
 
         Console.WriteLine("Start of Brevium Take Home Assessment");
+
+        // Initialize lists and fill
         await StartScheduling();
-        List<AppointmentRequest> appointments = new List<AppointmentRequest>();
+        List<AppointmentRequest> requests = new List<AppointmentRequest>();
         List<AppointmentInfo> schedule = await GetSchedule();
-        var newAppointment = await GetNextAppointmentRequest();
-        appointments.Add(newAppointment);
-        foreach (AppointmentRequest appointment in appointments)
+
+
+        // Get requests until there are none remaining
+        while (true)
         {
-            Console.WriteLine(appointment.RequestId);
-            Console.WriteLine(appointment.PersonId);
-            Console.WriteLine(appointment.PreferredDays);
-            Console.WriteLine(appointment.PreferredDocs);
-            Console.WriteLine(appointment.IsNew);
+            var (status, appointment) = await GetNextAppointmentRequest();
+            if (status == HttpStatusCode.NoContent)
+            {
+                Console.WriteLine("No more appointments (204). Stopping.");
+                break;
+            }
+
+            if (status == HttpStatusCode.OK && appointment is not null)
+            {
+                requests.Add(appointment);
+            }
+            else
+            {
+                Console.Error.WriteLine($"Error {(int)status} {status}.");
+                break;
+            }
         }
 
+        // Add each appointment to schedule dictionary
         foreach (AppointmentInfo appointment in schedule)
         {
-            Console.WriteLine(appointment.DoctorId);
-            Console.WriteLine(appointment.PersonId);
-            Console.WriteLine(appointment.AppointmentTime);
-            Console.WriteLine(appointment.IsNewPatientAppointment);
+            scheduleDictionary.Add((appointment.DoctorId, appointment.AppointmentTime), appointment);
+        }
+
+        foreach (AppointmentRequest appointment in requests)
+        {
+            AppointmentInfoRequest req = HandleRequest(appointment);
         }
     }
 
+    /// <summary>
+    /// Initialize Scheduling Requests
+    /// </summary>
+    /// <returns></returns>
     private static async Task StartScheduling()
     {
         var path = $"Scheduling/Start?token={token}";
         using var response = await client.PostAsync(path, content: null);
         if (!response.IsSuccessStatusCode)
         {
-            Console.WriteLine(response.StatusCode);
+            Console.Error.WriteLine(response.StatusCode);
             return;
         }
         Console.WriteLine("Successfully Started Scheduling");
     }
 
-    private static async Task<AppointmentRequest> GetNextAppointmentRequest()
+    /// <summary>
+    /// Get next appointment request from scheduler
+    /// </summary>
+    /// <returns> (StatusCode, AppointmentRequest)</returns>
+    private static async Task<(HttpStatusCode status, AppointmentRequest? appt)> GetNextAppointmentRequest()
     {
         var path = $"Scheduling/AppointmentRequest?token={token}";
-        var response = await client.GetAsync(path);
+        using var resp = await client.GetAsync(path);
 
-        if (!response.IsSuccessStatusCode)
+        if (resp.StatusCode == HttpStatusCode.NoContent)
+            return (resp.StatusCode, null);
+
+        if (resp.IsSuccessStatusCode)
         {
-            Console.WriteLine("Error with status code {}", response.StatusCode);
-            return new AppointmentRequest();
+            var appt = await resp.Content.ReadFromJsonAsync<AppointmentRequest>();
+            return (resp.StatusCode, appt);
         }
 
-        var appointment = await response.Content.ReadFromJsonAsync<AppointmentRequest>();
-        return appointment;
+        Console.Error.WriteLine($"Request failed: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+        return (resp.StatusCode, null);
     }
 
+    /// <summary>
+    /// Get existing appointments on the schedule
+    /// </summary>
+    /// <returns></returns>
     private static async Task<List<AppointmentInfo>> GetSchedule()
     {
         var path = $"Scheduling/Schedule?token={token}";
@@ -84,6 +123,16 @@ public class Program
         }
 
         var schedule = await response.Content.ReadFromJsonAsync<List<AppointmentInfo>>();
-        return schedule;
+        return schedule ?? new List<AppointmentInfo>();
+    }
+
+    /// <summary>
+    /// Make a AppointmentInfoRequest object with valid appointment time and doctor for a request
+    /// </summary>
+    /// <param name="req"></param>
+    /// <returns>AppointmentInfoRequest</returns>
+    private static AppointmentInfoRequest HandleRequest(AppointmentRequest req)
+    {
+        return new AppointmentInfoRequest();
     }
 }
